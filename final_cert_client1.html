@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Авторизация и управление дроном</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            justify-content: center;
+        }
+        .auth-container, .command-container {
+            padding: 20px;
+            background-color: #fff;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            width: 300px;
+            margin-bottom: 20px;
+        }
+        input[type="text"], input[type="password"], select {
+            width: 100%;
+            padding: 10px;
+            margin-top: 10px;
+            margin-bottom: 20px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            padding: 10px;
+            background-color: #007bff;
+            border: none;
+            border-radius: 5px;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .status-message, .server-response, .drone-status {
+            margin-top: 20px;
+            font-size: 14px;
+            text-align: center;
+        }
+        .drone-status {
+            color: #28a745;
+        }
+        .server-response {
+            color: #ff0000;
+        }
+    </style>
+</head>
+<body>
+    <div class="auth-container">
+        <h2>Авторизация</h2>
+        <input type="text" id="username" placeholder="Имя пользователя">
+        <input type="password" id="password" placeholder="Пароль">
+        <button onclick="login()">Войти</button>
+        <p class="status-message" id="statusMessage"></p>
+    </div>
+
+    <div class="command-container" style="display: none;">
+        <h2>Управление дроном</h2>
+        <select id="droneSelect"></select>
+        <input type="text" id="command" placeholder="Введите команду">
+        <button onclick="sendCommand()">Отправить команду</button>
+        <p class="drone-status" id="droneStatus"></p>
+        <p class="drone-status2" id="droneStatus2"></p>
+        <p class="server-response" id="serverResponse"></p>
+    </div>
+
+    <script>
+        let socket;
+
+        function connectSocket() {
+            socket = new WebSocket("ws://localhost:8765");
+
+            socket.onopen = () => {
+                console.log("WebSocket connected");
+            };
+
+            socket.onmessage = (event) => {
+                const statusMessage = document.getElementById('statusMessage');
+                const serverResponse = document.getElementById('serverResponse');
+                const droneSelect = document.getElementById('droneSelect');
+                const droneStatus = document.getElementById('droneStatus');
+                const droneStatus2 = document.getElementById('droneStatus2');
+
+                console.log(event.data);
+
+                if (event.data.startsWith("JWT:")) {
+                    const token = event.data.substring(4);
+                    localStorage.setItem('jwtToken', token);
+                    statusMessage.style.color = "green";
+                    statusMessage.textContent = "Авторизация успешна!";
+                    document.querySelector('.command-container').style.display = 'block';
+                } else if (event.data.startsWith("AUTHORIZED:")) {
+                    serverResponse.style.color = "green";
+                    serverResponse.textContent = event.data;
+                } else if (event.data.startsWith("DRONES_STATUS:")) {
+                    const dronesData = event.data.substring(14);
+                    try {
+                        const drones = JSON.parse(dronesData.replace(/'/g, '"')); // Замена одинарных кавычек на двойные и парсинг
+                        droneSelect.innerHTML = "";  // Очищаем список перед обновлением
+                        for (const drone in drones) {
+                            const option = document.createElement("option");
+                            option.value = drone;
+                            option.text = `${drone} (${drones[drone]})`;
+                            droneSelect.appendChild(option);
+                        }
+                        droneStatus.textContent = "Дроны обновлены.";
+                    } catch (e) {
+                        console.error("Ошибка парсинга данных о дронах:", e);
+                    }
+                } else if (event.data.startsWith("STATUS_UPDATE:")) {
+                    const statusUpdate = event.data.substring(14);
+                    droneStatus2.textContent = `Статус дрона: ${statusUpdate}`;
+                    droneStatus2.style.color = "blue";
+                } else {
+                    statusMessage.textContent = event.data;
+                }
+            };
+
+            socket.onerror = (error) => {
+                console.error("WebSocket error: ", error);
+            };
+        }
+
+        function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                connectSocket();
+            }
+
+            const credentials = `LOGIN:${username},${password}`;
+            socket.send(credentials);
+        }
+
+        function sendCommand() {
+            const command = document.getElementById('command').value;
+            const token = localStorage.getItem('jwtToken');
+            const selectedDrone = document.getElementById('droneSelect').value;
+
+            if (!token) {
+                alert("Сначала выполните авторизацию!");
+                return;
+            }
+
+            if (!selectedDrone) {
+                alert("Выберите подключенный дрон!");
+                return;
+            }
+
+            const message = `COMMAND:${token},${selectedDrone},${command}`;
+            socket.send(message);
+        }
+
+        window.onload = () => {
+            connectSocket();
+        };
+    </script>
+</body>
+</html>
