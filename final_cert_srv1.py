@@ -43,7 +43,8 @@ async def notify_users(status_update):
         for user_ws in connected_users.values():
             logging.info(status_update)
             await user_ws.send(status_update)
-            await user_ws.send(f"DRONES_STATUS:{drones_status}")
+            #  await user_ws.send(f"DRONES_STATUS:{drones_status}")
+            status_notifier.notify_observers(f"DRONES_STATUS:{drones_status}")
 
 
 async def handle_client(websocket, path):
@@ -57,7 +58,7 @@ async def handle_client(websocket, path):
             if username in users_db and users_db[username] == password:
                 token = create_jwt_token(username)
                 await websocket.send(f"JWT:{token}")
-                #logging.info(f'Token sent: {token}')
+                logging.info(f'Token sent: {token}')
 
                 if username.startswith('drone'):
                     connected_drones[username] = websocket
@@ -66,6 +67,7 @@ async def handle_client(websocket, path):
 
                 if username.startswith('user'):
                     connected_users[username] = websocket
+                    status_notifier.add_observer(Operator(websocket))
                     logging.info(f'Operator {username} connected')
                     await notify_users(f'LOGIN:{username}, connected')  # Отправляем оператору статус дронов
 
@@ -119,8 +121,56 @@ async def cleanup():
             await notify_users(f'STATUS_UPDATE:{user}, disconnected')
 
 
+#  Реализация паттерна Observer
+class DroneObserver:
+    def update(self, drone_status):
+        pass
+
+
+class Operator(DroneObserver):
+    def __init__(self, websocket):
+        self.websocket = websocket
+
+    async def update(self, drone_status):
+        logging.info(f'observer - {drone_status}')
+        await self.websocket.send(drone_status)
+
+
+class DroneStatusNotifier:
+    def __init__(self):
+        self._observers = []
+
+    def add_observer(self, observer):
+        self._observers.append(observer)
+
+    def notify_observers(self, drone_status):
+        for observer in self._observers:
+            asyncio.create_task(observer.update(drone_status))
+
+
+
+#  Реализация паттерна Singleton (Одиночка)
+class WebSocketServer:
+    _instance = None
+
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            cls._instance = super(WebSocketServer, cls).__new__(cls)
+        return cls._instance
+
+    def __init__(self, host='localhost', port=8765):
+        self.host = host
+        self.port = port
+
+    async def start_server(self, handle_client):
+        server = await websockets.serve(handle_client, self.host, self.port)
+        await server.wait_closed()
+
+
+status_notifier = DroneStatusNotifier()
+
 print("Starting WebSocket server...")
-start_server = websockets.serve(handle_client, "localhost", 8765)
-asyncio.get_event_loop().run_until_complete(start_server)
+server_instance = WebSocketServer()
+asyncio.get_event_loop().run_until_complete(server_instance.start_server(handle_client))
 asyncio.get_event_loop().create_task(cleanup())
 asyncio.get_event_loop().run_forever()
