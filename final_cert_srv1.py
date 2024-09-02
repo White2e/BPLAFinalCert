@@ -3,6 +3,7 @@ import websockets
 import jwt
 import datetime
 import logging
+import async_timeout
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(name)s - %(levelname)s - %(message)s')
@@ -49,58 +50,69 @@ async def notify_users(status_update):
 
 async def handle_client(websocket, path):
     async for data in websocket:
-        if data.startswith("LOGIN:"):
-            credentials = data[6:].split(",")
-            username = credentials[0]
-            password = credentials[1]
-            logging.info(f'Login attempt: {username}')
+        await process_client_data(data, websocket)
 
-            if username in users_db and users_db[username] == password:
-                token = create_jwt_token(username)
-                await websocket.send(f"JWT:{token}")
-                logging.info(f'Token sent: {token}')
 
-                if username.startswith('drone'):
-                    connected_drones[username] = websocket
-                    logging.info(f'Drone {username} connected')
-                    await notify_users(f'LOGIN:{username}, connected')  # Обновляем статус дронов у всех операторов
+async def process_client_data(data, websocket):
+    try:
+        # Ограничиваем время выполнения операции 5 секундами
+        with async_timeout.timeout(5):
 
-                if username.startswith('user'):
-                    connected_users[username] = websocket
-                    status_notifier.add_observer(Operator(websocket))
-                    logging.info(f'Operator {username} connected')
-                    await notify_users(f'LOGIN:{username}, connected')  # Отправляем оператору статус дронов
+            if data.startswith("LOGIN:"):
+                credentials = data[6:].split(",")
+                username = credentials[0]
+                password = credentials[1]
+                logging.info(f'Login attempt: {username}')
 
-            else:
-                await websocket.send("ERROR: Неверные имя пользователя или пароль")
+                if username in users_db and users_db[username] == password:
+                    token = create_jwt_token(username)
+                    await websocket.send(f"JWT:{token}")
+                    logging.info(f'Token sent: {token}')
 
-        elif data.startswith("COMMAND:"):
-            credentials = data[8:].split(",")
-            token = credentials[0]
-            drone_name = credentials[1]
-            command = credentials[2]
+                    if username.startswith('drone'):
+                        connected_drones[username] = websocket
+                        logging.info(f'Drone {username} connected')
+                        await notify_users(f'LOGIN:{username}, connected')  # Обновляем статус дронов у всех операторов
 
-            username = verify_jwt_token(token)
-            if username:
-                logging.info(f'Command received: {command} for {drone_name} from {username}')
-                drone_ws = connected_drones.get(drone_name)
+                    if username.startswith('user'):
+                        connected_users[username] = websocket
+                        status_notifier.add_observer(Operator(websocket))
+                        logging.info(f'Operator {username} connected')
+                        await notify_users(f'LOGIN:{username}, connected')  # Отправляем оператору статус дронов
 
-                if drone_ws:
-                    await drone_ws.send(f"COMMAND:{command}")
-                    await websocket.send(f"AUTHORIZED: Команда {command} отправлена на дрон {drone_name}")
                 else:
-                    await websocket.send(f"ERROR: Дрон {drone_name} не подключен")
+                    await websocket.send("ERROR: Неверные имя пользователя или пароль")
+
+            elif data.startswith("COMMAND:"):
+                credentials = data[8:].split(",")
+                token = credentials[0]
+                drone_name = credentials[1]
+                command = credentials[2]
+
+                username = verify_jwt_token(token)
+                if username:
+                    logging.info(f'Command received: {command} for {drone_name} from {username}')
+                    drone_ws = connected_drones.get(drone_name)
+
+                    if drone_ws:
+                        await drone_ws.send(f"COMMAND:{command}")
+                        await websocket.send(f"AUTHORIZED: Команда {command} отправлена на дрон {drone_name}")
+                    else:
+                        await websocket.send(f"ERROR: Дрон {drone_name} не подключен")
+
+                else:
+                    await websocket.send("ERROR: Неверный или просроченный токен")
+
+            elif data.startswith("STATUS_UPDATE:"):
+                status_update = data[len("STATUS_UPDATE: "):]
+                await notify_users(f'STATUS_UPDATE:{status_update}')
+                logging.info(f"Status update from drone: {status_update}")
 
             else:
-                await websocket.send("ERROR: Неверный или просроченный токен")
+                await websocket.send("ERROR: Неверная команда")
 
-        elif data.startswith("STATUS_UPDATE:"):
-            status_update = data[len("STATUS_UPDATE: "):]
-            await notify_users(f'STATUS_UPDATE:{status_update}')
-            logging.info(f"Status update from drone: {status_update}")
-
-        else:
-            await websocket.send("ERROR: Неверная команда")
+    except asyncio.TimeoutError:
+        await websocket.send("ERROR: Operation timed out")
 
 
 async def cleanup():
