@@ -8,9 +8,6 @@ import async_timeout
 # Настройка логирования для записи событий в консоль
 logging.basicConfig(level=logging.INFO, format='%(name)s - %(levelname)s - %(message)s')
 
-# Секретный ключ для подписи JWT-токенов
-SECRET_KEY = 'my_secret_key'
-
 # Простейшая база данных пользователей
 users_db = {
     "user1": "111",
@@ -19,28 +16,33 @@ users_db = {
     "drone2": "444",
 }
 
-# Словари для отслеживания подключенных дронов и операторов
 connected_drones = {}  # Хранение подключенных WebSocket-дронов
 connected_users = {}  # Хранение подключенных WebSocket-операторов
 
-# Функция для создания JWT-токена
-def create_jwt_token(username):
-    payload = {
-        "sub": username,  # Идентификатор пользователя
-        "iat": datetime.datetime.now(datetime.timezone.utc),  # Время создания токена
-        "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)  # Время истечения токена
-    }
-    return jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+# Класс для работы с JWT-токенами
+class JWTManager:
+    def __init__(self, secret_key):
+        self.secret_key = secret_key
 
-# Функция для проверки JWT-токена
-def verify_jwt_token(token):
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
-        return payload["sub"]  # Возвращает имя пользователя из токена
-    except jwt.ExpiredSignatureError:
-        return None  # Токен истек
-    except jwt.InvalidTokenError:
-        return None  # Неверный токен
+    def create_jwt_token(self, username):
+        payload = {
+            "sub": username,  # Идентификатор пользователя
+            "iat": datetime.datetime.now(datetime.timezone.utc),  # Время создания токена
+            "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)  # Время истечения токена
+        }
+        return jwt.encode(payload, self.secret_key, algorithm="HS256")
+
+    def verify_jwt_token(self, token):
+        try:
+            payload = jwt.decode(token, self.secret_key, algorithms=["HS256"])
+            return payload["sub"]  # Возвращает имя пользователя из токена
+        except jwt.ExpiredSignatureError:
+            return None  # Токен истек
+        except jwt.InvalidTokenError:
+            return None  # Неверный токен
+
+# Инициализация JWTManager с секретным ключом
+jwt_manager = JWTManager('my_secret_key')
 
 # Функция для уведомления всех операторов о статусе дронов
 async def notify_users(status_update):
@@ -72,7 +74,7 @@ async def process_client_data(data, websocket):
                 logging.info(f'Login attempt: {username}')
 
                 if username in users_db and users_db[username] == password:
-                    token = create_jwt_token(username)  # Создаем JWT-токен
+                    token = jwt_manager.create_jwt_token(username)  # Создаем JWT-токен с использованием JWTManager
                     await websocket.send(f"JWT:{token}")  # Отправляем токен клиенту
                     logging.info(f'Token sent: {token}')
 
@@ -97,7 +99,7 @@ async def process_client_data(data, websocket):
                 drone_name = credentials[1]
                 command = credentials[2]
 
-                username = verify_jwt_token(token)
+                username = jwt_manager.verify_jwt_token(token)  # Проверка JWT-токена с использованием JWTManager
                 if username:
                     logging.info(f'Command received: {command} for {drone_name} from {username}')
                     drone_ws = connected_drones.get(drone_name)

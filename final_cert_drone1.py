@@ -29,6 +29,7 @@ async def websocket_client():
         auth_response = await websocket.recv()
 
         if auth_response.startswith("JWT:"):
+            logging.info(f"Received JWT-token: {auth_response}")
             logging.info("Authorization successful. Waiting for commands...")
 
             while True:
