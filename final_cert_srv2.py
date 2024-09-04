@@ -4,10 +4,15 @@ import jwt
 import datetime
 import logging
 import async_timeout
+import cProfile  # Для профилирования
+import pstats  # Для анализа результатов профилирования
+
 
 # Настройка логирования для записи событий в консоль
 logging.basicConfig(level=logging.INFO, format='%(name)s - %(levelname)s - %(message)s')
 
+# Настройка профилирования
+pr = cProfile.Profile()
 
 # Секретный ключ для подписи JWT-токенов
 SECRET_KEY = 'my_secret_key'
@@ -61,10 +66,22 @@ async def notify_users(status_update):
             await user_ws.send(status_update)  # Отправляем статус дронов операторам
             status_notifier.notify_observers(f"DRONES_STATUS:{drones_status}")
 
+
 # Функция для обработки входящих данных от клиентов
 async def handle_client(websocket, path):
     async for data in websocket:
+        pr.enable()  # Включаем профилирование
+
         await process_client_data(data, websocket)
+
+        pr.disable()  # Выключаем профилирование
+
+        # Сохраняем результаты профилирования в файл
+        with open('profiling_results.txt', 'w') as f:
+            ps = pstats.Stats(pr, stream=f)
+            ps.sort_stats('cumulative')
+            ps.print_stats()
+
 
 # Функция для обработки команд и сообщений от клиентов
 async def process_client_data(data, websocket):
@@ -192,12 +209,15 @@ class WebSocketServer:
         server = await websockets.serve(handle_client, self.host, self.port)
         await server.wait_closed()  # Ожидаем завершения работы сервера
 
-# Создание экземпляра уведомителя
-status_notifier = DroneStatusNotifier()
 
-# Запуск WebSocket сервера
-print("Starting WebSocket server...")
-server_instance = WebSocketServer()
-asyncio.get_event_loop().run_until_complete(server_instance.start_server(handle_client))
-asyncio.get_event_loop().create_task(cleanup())
-asyncio.get_event_loop().run_forever()
+if __name__ == '__main__':
+
+    # Создание экземпляра уведомителя
+    status_notifier = DroneStatusNotifier()
+
+    # Запуск WebSocket сервера
+    print("Starting WebSocket server...")
+    server_instance = WebSocketServer()
+    asyncio.get_event_loop().run_until_complete(server_instance.start_server(handle_client))
+    asyncio.get_event_loop().create_task(cleanup())
+    asyncio.get_event_loop().run_forever()
